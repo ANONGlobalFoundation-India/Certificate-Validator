@@ -90,6 +90,8 @@
       <div>
         <label for="theme">Colour theme of the public page card</label>
         <select id="theme"></select>
+        <span class="swatch" id="swatch" aria-hidden="true"><i></i></span>
+        <p class="hint">Chosen automatically from the category. Change it if you like.</p>
       </div>
       <div id="statusWrap" hidden>
         <label for="status">Status</label>
@@ -230,6 +232,21 @@
   }
   options($('category'), C.categories);
   options($('theme'), C.themes || [{ code: 'classic', label: 'Default' }]);
+  // each category suggests a colour theme; the little bar shows the colours
+  function swatch() {
+    var t = (C.themes || []).filter(function (x) { return x.code === $('theme').value; })[0]; if (!t) return;
+    var g = function (stops, a) { return stops.length > 1 ? 'linear-gradient(' + a + ',' + stops.join(',') + ')' : stops[0]; };
+    $('swatch').style.background = g(t.bg, '180deg'); $('swatch').style.borderColor = t.frame;
+    $('swatch').firstChild.style.background = g(t.band, '90deg');
+  }
+  function themeFromCategory() {
+    var c = C.categories.filter(function (x) { return x.code === $('category').value; })[0];
+    if (c && c.theme) $('theme').value = c.theme;
+    swatch();
+  }
+  $('category').addEventListener('change', themeFromCategory);
+  $('theme').addEventListener('change', swatch);
+  themeFromCategory();
   (C.certificateTitles || []).forEach(function (t) { var o = document.createElement('option'); o.value = t; $('titles').appendChild(o); });
 
   // ================= helpers
@@ -410,7 +427,7 @@
     var keep = $('site').value, m = mode();
     $('form').reset();
     document.querySelector('input[name=mode][value=' + m + ']').checked = true;
-    $('site').value = keep; $('issueDate').value = today();
+    $('site').value = keep; $('issueDate').value = today(); themeFromCategory();
     current = null; pending = []; batch = []; setEditing(null); siteRefresh();
     ['result', 'preview', 'batch'].forEach(function (id) { $(id).hidden = true; });
     $('go').disabled = false;
@@ -639,7 +656,7 @@
     ['name', 'organization', 'issueDate'].concat(SHARED).forEach(function (f) { $(f).value = rec[f] || ''; });
     var code = rec.categoryCode || (C.categories.filter(function (c) { return c.label === rec.category; })[0] || {}).code;
     if (code) $('category').value = code;
-    $('theme').value = rec.theme || $('theme').options[0].value;
+    $('theme').value = rec.theme || $('theme').options[0].value; swatch();
     $('replacedBy').value = rec.replacedBy || '';
     setEditing(cleanId(rec.id));
     $('status').value = rec.status || 'valid'; toggleRepl();
