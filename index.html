@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Verify a certificate | ANON Credential Hub</title>
 <meta name="description" content="Check that a certificate issued by ANON Global Foundation is genuine and current.">
+<meta property="og:title" content="Verified credential | ANON Global Foundation">
+<meta property="og:description" content="Every ANON Global Foundation certificate carries a unique ID and QR code. Open this link to confirm the certificate is genuine and current.">
+<meta property="og:type" content="website">
 <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
@@ -45,6 +48,8 @@
 <footer><span id="footerText"></span></footer>
 
 <script src="assets/config.js"></script>
+<script src="assets/qr.js"></script>
+<script src="assets/badge.js"></script>
 <script>
 (function () {
   var C = window.AGF_CONFIG || {};
@@ -73,6 +78,18 @@
     return m ? (+m[3]) + ' ' + MONTHS[+m[2] - 1] + ' ' + m[1] : (s || '');
   }
   function pageUrl(id) { return location.origin + location.pathname + '?id=' + encodeURIComponent(id); }
+  function copyText(text, btn, doneLabel) {
+    var label = btn.textContent;
+    var done = function () { btn.textContent = doneLabel; setTimeout(function () { btn.textContent = label; }, 2200); };
+    if (navigator.clipboard) return navigator.clipboard.writeText(text).then(done, function () { prompt('Copy this:', text); });
+    prompt('Copy this:', text);
+  }
+  function saveBlob(blob, name) {
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+  }
 
   function banner(kind, title, text) {
     var marks = { valid: '✓', revoked: '✕', superseded: '↻', notfound: '?' };
@@ -94,11 +111,101 @@
     out.appendChild(card);
   }
 
+  // ---- the themed certificate card (colours and logo come from the theme in config.js)
+  function credCard(rec, theme) {
+    var card = el('div', 'cred');
+    var s = card.style;
+    s.setProperty('--c-bg', AGFBadge.cssGradient(theme.bg, '180deg'));
+    s.setProperty('--c-band', AGFBadge.cssGradient(theme.band, '90deg'));
+    s.setProperty('--c-ink', theme.ink); s.setProperty('--c-accent', theme.accent); s.setProperty('--c-title', theme.title);
+    s.setProperty('--c-band-ink', theme.bandInk); s.setProperty('--c-frame', theme.frame);
+    var logo = new Image();
+    logo.className = 'c-logo'; logo.alt = C.orgName;
+    logo.onerror = function () { card.replaceChild(el('div', 'c-org', C.orgName), logo); };
+    logo.src = AGFBadge.logoFile(theme);
+    card.appendChild(logo);
+    var title = rec.certificateTitle || 'Certificate', tm = /^(certificate)\s+(of\s+.+)$/i.exec(title);
+    if (rec.program) card.appendChild(el('div', 'c-band', rec.program));
+    card.appendChild(el('div', 'c-big', tm ? tm[1] : title));
+    if (tm) card.appendChild(el('div', 'c-sub', tm[2]));
+    card.appendChild(el('div', 'c-to', 'is awarded to'));
+    card.appendChild(el('div', 'c-name', rec.name));
+    if (rec.organization) card.appendChild(el('div', 'c-inst', rec.organization));
+    if (rec.level) card.appendChild(el('div', 'c-level', rec.level));
+    if (rec.status === 'valid') card.appendChild(el('div', 'c-verified', '✓ Verified credential'));
+    var cid = el('div', 'c-id'); cid.appendChild(el('small', null, 'Certificate ID')); cid.appendChild(document.createTextNode(rec.id));
+    card.appendChild(cid);
+    return card;
+  }
+
+  // ---- "Post on LinkedIn": sticker image + ready caption
+  function caption(rec, url) {
+    var vals = { certificate: rec.certificateTitle || 'certificate', program: rec.program || '', org: C.orgName, id: rec.id, link: url, name: rec.name };
+    return String(C.shareCaption || 'My {certificate} from {org} is verified here: {link} (ID {id})')
+      .replace(/\{(\w+)\}/g, function (m, k) { return vals[k] != null ? vals[k] : m; }).replace(/ for !/, '!');
+  }
+  function sharePanel(rec, theme, url) {
+    var box = el('div', 'share no-print');
+    box.appendChild(el('h2', null, 'Post your certificate on LinkedIn'));
+    var canvas = document.createElement('canvas');
+    canvas.setAttribute('role', 'img');
+    canvas.setAttribute('aria-label', 'Certificate sticker for ' + rec.name);
+    box.appendChild(canvas);
+    var logo = new Image(), ready = false;
+    function paint() {
+      AGFBadge.draw(canvas, { rec: rec, theme: theme, orgName: C.orgName, url: url, logo: logo.naturalWidth ? logo : null,
+        verifiedLine: C.verifiedLine || ('Validated by ' + C.orgName) });
+      ready = true;
+    }
+    logo.onload = paint; logo.onerror = paint; logo.src = AGFBadge.logoFile(theme);
+    function toBlob() { return new Promise(function (res) { if (!ready) paint(); canvas.toBlob(res, 'image/png'); }); }
+    var fileName = rec.id + '-ANON-verified-certificate.png';
+
+    var steps = el('ol');
+    var s1 = el('li'); s1.appendChild(el('b', null, 'Save the certificate sticker'));
+    var dl = el('button', 'small', 'Download image'); dl.type = 'button';
+    dl.onclick = function () { toBlob().then(function (b) { saveBlob(b, fileName); }); };
+    s1.appendChild(dl); steps.appendChild(s1);
+
+    var s2 = el('li'); s2.appendChild(el('b', null, 'Check your caption, then open LinkedIn'));
+    var ta = el('textarea'); ta.value = caption(rec, url); ta.setAttribute('aria-label', 'Caption for your post');
+    s2.appendChild(ta);
+    var go = el('button', 'small', 'Copy caption and open LinkedIn'); go.type = 'button';
+    go.onclick = function () {
+      // LinkedIn usually fills the post box from this link; the caption is also copied in case it does not
+      var copied = navigator.clipboard ? navigator.clipboard.writeText(ta.value) : Promise.reject();
+      window.open('https://www.linkedin.com/feed/?shareActive=true&text=' + encodeURIComponent(ta.value), '_blank', 'noopener');
+      copied.then(function () { go.textContent = 'Caption copied, LinkedIn opened'; },
+        function () { ta.focus(); ta.select(); go.textContent = 'LinkedIn opened. Copy the caption above'; });
+    };
+    s2.appendChild(go); steps.appendChild(s2);
+
+    var s3 = el('li'); s3.appendChild(el('b', null, 'In the LinkedIn post box'));
+    s3.appendChild(el('p', 'tip', 'Add the image you saved, using the photo button. To tag us, type @' + C.orgName + ' and choose our page from the list. If the caption is not already there, paste it (it is copied).'));
+    steps.appendChild(s3);
+
+    // on phones the image can go straight to the LinkedIn or WhatsApp app
+    var probe = null;
+    try { probe = new File([''], 'a.png', { type: 'image/png' }); } catch (e) { probe = null; }
+    if (probe && navigator.canShare && navigator.canShare({ files: [probe] })) {
+      var s4 = el('li'); s4.appendChild(el('b', null, 'On a phone? Share it directly'));
+      var nat = el('button', 'small ghost', 'Share image to an app'); nat.type = 'button';
+      nat.onclick = function () {
+        toBlob().then(function (b) {
+          return navigator.share({ files: [new File([b], fileName, { type: 'image/png' })], text: ta.value });
+        }).catch(function () {});
+      };
+      s4.appendChild(nat); steps.appendChild(s4);
+    }
+    box.appendChild(steps);
+    return box;
+  }
+
   function showRecord(rec) {
     out.innerHTML = '';
     var status = ['valid', 'revoked', 'superseded'].indexOf(rec.status) >= 0 ? rec.status : 'notfound';
     if (status === 'notfound') return showNotFound(rec.id);
-    var url = pageUrl(rec.id);
+    var url = pageUrl(rec.id), theme = AGFBadge.pick(C.themes, rec.theme);
     var card = el('section', 'card');
 
     if (status === 'valid')
@@ -117,26 +224,14 @@
 
     var grid = el('div', 'result');
 
-    // left: certificate image if you uploaded one to /certs, otherwise a simple seal
-    var visual = el('div', 'visual');
-    var themes = (C.themes || []).map(function (t) { return t.code; });
-    var seal = el('div', 'cred ' + (themes.indexOf(rec.theme) >= 0 ? rec.theme : 'classic'));
-    var title = rec.certificateTitle || 'Certificate', tm = /^(certificate)\s+(of\s+.+)$/i.exec(title);
-    seal.appendChild(el('div', 'c-org', C.orgName));
-    if (rec.program) seal.appendChild(el('div', 'c-band', rec.program));
-    seal.appendChild(el('div', 'c-big', tm ? tm[1] : title));
-    if (tm) seal.appendChild(el('div', 'c-sub', tm[2]));
-    seal.appendChild(el('div', 'c-to', 'is awarded to'));
-    seal.appendChild(el('div', 'c-name', rec.name));
-    if (rec.organization) seal.appendChild(el('div', 'c-inst', rec.organization));
-    if (rec.level) seal.appendChild(el('div', 'c-level', rec.level));
-    var cid = el('div', 'c-id'); cid.appendChild(el('small', null, 'Certificate ID')); cid.appendChild(document.createTextNode(rec.id));
-    seal.appendChild(cid);
-    visual.appendChild(seal);
+    // left: certificate image if you uploaded one to /certs, otherwise the themed card
+    var visual = el('div', 'visual'), cred = credCard(rec, theme);
+    visual.appendChild(cred);
     var exts = ['jpg', 'png', 'jpeg', 'webp'], i = 0, img = new Image(), dl = null;
+    img.className = 'cert';
     img.alt = 'Certificate issued to ' + rec.name;
     img.onload = function () {
-      visual.replaceChild(img, seal);
+      visual.replaceChild(img, cred);
       if (dl && status === 'valid') { dl.href = img.src; dl.hidden = false; }
     };
     img.onerror = function () { i++; if (i < exts.length) img.src = 'certs/' + rec.id + '.' + exts[i]; };
@@ -165,33 +260,34 @@
     fact('Verification link', url, true);
     d.appendChild(facts);
 
-    var acts = el('div', 'row actions no-print');
+    var acts = el('div', 'row actions no-print'), panel = null;
     function linkBtn(text, href, ghost) {
       var a = el('a', 'btn small' + (ghost ? ' ghost' : ''), text);
       a.href = href; a.target = '_blank'; a.rel = 'noopener';
       acts.appendChild(a); return a;
     }
-    var copy = el('button', 'small', 'Copy link');
-    copy.type = 'button';
-    copy.onclick = function () {
-      var done = function () { copy.textContent = 'Link copied'; setTimeout(function () { copy.textContent = 'Copy link'; }, 2000); };
-      if (navigator.clipboard) navigator.clipboard.writeText(url).then(done, function () { prompt('Copy this link:', url); });
-      else prompt('Copy this link:', url);
-    };
-    acts.appendChild(copy);
     if (status === 'valid') {
+      var post = el('button', 'small', 'Post on LinkedIn'); post.type = 'button';
+      post.onclick = function () {
+        if (!panel) { panel = sharePanel(rec, theme, url); card.appendChild(panel); }
+        panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      };
+      acts.appendChild(post);
       var enc = encodeURIComponent, ym = /^(\d{4})-(\d{2})/.exec(rec.issueDate || '');
       var certName = (rec.certificateTitle || 'Certificate') + (rec.program ? ' – ' + rec.program : '');
-      var shareText = 'My ' + certName + ' from ' + C.orgName + ' (ID ' + rec.id + ')';
+      var shareText = 'My ' + certName + ' from ' + C.orgName + ' is a verified credential (ID ' + rec.id + ')';
       linkBtn('Add to LinkedIn profile', 'https://www.linkedin.com/profile/add?startTask=CERTIFICATION_NAME&name=' + enc(certName) +
         '&organizationName=' + enc(C.orgName) + (ym ? '&issueYear=' + ym[1] + '&issueMonth=' + (+ym[2]) : '') +
         '&certUrl=' + enc(url) + '&certId=' + enc(rec.id), true);
-      linkBtn('Share on LinkedIn', 'https://www.linkedin.com/sharing/share-offsite/?url=' + enc(url), true);
       linkBtn('WhatsApp', 'https://wa.me/?text=' + enc(shareText + ' ' + url), true);
       linkBtn('X', 'https://twitter.com/intent/tweet?text=' + enc(shareText) + '&url=' + enc(url), true);
       dl = linkBtn('Download certificate', '#', true);
       dl.hidden = true; dl.setAttribute('download', rec.id);
     }
+    var copy = el('button', 'small ghost', 'Copy link');
+    copy.type = 'button';
+    copy.onclick = function () { copyText(url, copy, 'Link copied'); };
+    acts.appendChild(copy);
     var pr = el('button', 'small ghost', 'Print');
     pr.type = 'button'; pr.onclick = function () { window.print(); };
     acts.appendChild(pr);
